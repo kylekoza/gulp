@@ -140,8 +140,9 @@
   const pick = arr => arr[(Math.random() * arr.length) | 0];
   const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
 
-  // The size at which the player has "outgrown the tank" and clears the level.
-  function goalSizeFor() { return clamp(Math.min(W, H) * 0.17, 80, 240); }
+  // The player clears the level only once it has outgrown the whole screen —
+  // its body alone overflows the shorter dimension, tail and all.
+  function goalSizeFor() { return Math.min(W, H) * 0.55; }
 
   // ---- High score (persisted) -------------------------------------------
   let best = 0;
@@ -248,7 +249,7 @@
       speed,
       species: species || "drifter",
       fear: 0,                     // darter flee intensity (0..1)
-      homeSpeed: rand(45, 80),     // hunter vertical tracking speed
+      homeSpeed: rand(55, 95),     // hunter vertical tracking speed
       wobble: Math.random() * Math.PI * 2,
       wobbleSpeed: rand(2, 4),
       alive: true
@@ -264,15 +265,15 @@
     const edgeX = (s) => fromLeft ? -s * 2 : W + s * 2;
 
     // species mix — more hunters the deeper you go
-    const pHunter = clamp(0.12 + level * 0.035, 0.12, 0.42);
+    const pHunter = clamp(0.16 + level * 0.045, 0.16, 0.5);
     const r = Math.random();
     let species;
     if (r < pHunter)            species = "hunter";
     else if (r < pHunter + 0.18) species = "darter";
-    else if (r < pHunter + 0.34) species = "schooler";
+    else if (r < pHunter + 0.32) species = "schooler";
     else                         species = "drifter";
 
-    const speedMul = 1 + (level - 1) * 0.12;
+    const speedMul = 1 + (level - 1) * 0.14;
 
     if (species === "schooler") {
       const n = 3 + (Math.random() * 4 | 0);
@@ -290,19 +291,19 @@
 
     let size, speed;
     if (species === "hunter") {
-      size = clamp(player.size * rand(1.15, 1.9), 12, Math.max(W, H) * 0.18);
-      speed = rand(35, 70) * speedMul;
+      size = clamp(player.size * rand(1.15, 2.0), 12, Math.max(W, H) * 0.2);
+      speed = rand(45, 85) * speedMul;
     } else if (species === "darter") {
       size = clamp(rand(6, player.size * 0.7), 5, player.size * 0.9);
-      speed = rand(55, 95) * speedMul;
+      speed = rand(60, 105) * speedMul;
     } else {
-      // drifter — the original biased distribution for a mix of prey & threat
+      // drifter — biased mix of prey & threat (leaner on easy prey than before)
       const rr = Math.random();
-      if (rr < 0.55)      size = rand(6, player.size * 0.85);
-      else if (rr < 0.85) size = rand(player.size * 0.9, player.size * 1.6);
+      if (rr < 0.48)      size = rand(6, player.size * 0.85);
+      else if (rr < 0.78) size = rand(player.size * 0.9, player.size * 1.6);
       else                size = rand(player.size * 1.6, player.size * 2.8 + 14);
-      size = clamp(size, 5, Math.max(W, H) * 0.18);
-      speed = rand(40, 95) * (1 + 14 / size) * 0.5 * speedMul;
+      size = clamp(size, 5, Math.max(W, H) * 0.2);
+      speed = rand(45, 100) * (1 + 14 / size) * 0.5 * speedMul;
     }
 
     const y = rand(size, H - size);
@@ -516,6 +517,16 @@
       ctx.fillText(game.flashText, W / 2, H * 0.32);
       ctx.globalAlpha = 1;
     }
+
+    // discreet controls hint — fades out over the first few seconds of a run
+    if (game.hint > 0) {
+      ctx.globalAlpha = clamp(game.hint, 0, 1) * 0.6;
+      ctx.textAlign = "center";
+      ctx.fillStyle = "rgba(189,236,255,1)";
+      ctx.font = "700 14px 'Trebuchet MS', system-ui, sans-serif";
+      ctx.fillText("WASD / arrows / mouse to swim   ·   Space or click to dash   ·   P to pause", W / 2, H - 30);
+      ctx.globalAlpha = 1;
+    }
     ctx.restore();
   }
 
@@ -536,6 +547,9 @@
   const DASH_COOLDOWN = 1.4;
   const COMBO_WINDOW = 1.7;       // seconds to chain the next eat
   const DARTER_FLEE_RANGE = 170;  // px at which darters start bolting
+  const KEY_ACCEL = 2400;         // keyboard thrust (px/s^2)
+  const KEY_DAMP = 4.5;           // velocity damping -> momentum / glide
+  const KEY_MAX = 470;            // top keyboard speed (px/s)
   let player, enemies, game, lastT, running = false, paused = false, spawnAcc = 0;
   let threatLevel = 0;
 
@@ -545,11 +559,12 @@
   function setupLevel(level, score) {
     player = makeFish(START_SIZE, W / 2, H / 2, 1, "#ffb347", 0);
     player.pop = 1; player.dashCd = 0; player.dashT = 0;
-    player.dvx = 0; player.dvy = 0; player.grace = 1.8;
+    player.dvx = 0; player.dvy = 0; player.vx = 0; player.vy = 0; player.grace = 1.5;
     enemies = [];
     game = {
       score: score, time: 0, level: level, goalSize: goalSizeFor(),
-      combo: 0, comboTimer: 0, levelFlash: 1.0, flashText: "LEVEL " + level
+      combo: 0, comboTimer: 0, levelFlash: 1.0, flashText: "LEVEL " + level,
+      hint: level === 1 ? 5.5 : 0
     };
     spawnAcc = 0; threatLevel = 0; particles = []; shake = 0;
     controlMode = "mouse";
@@ -632,6 +647,7 @@
     if (player.dashCd > 0) player.dashCd -= dt;
     if (player.dashT > 0) player.dashT -= dt;
     if (game.levelFlash > 0) game.levelFlash -= dt;
+    if (game.hint > 0) game.hint -= dt;
     if (player.pop > 1) player.pop = Math.max(1, player.pop - dt * 2.5);
     if (game.combo > 0) {
       game.comboTimer -= dt;
@@ -668,13 +684,21 @@
     // --- player steering ---
     // In keys mode the fish holds position when no key is pressed — no snap-back.
     if (controlMode === "keys") {
+      // Velocity model: thrust toward the held direction, then damp. The fish
+      // carries momentum, eases between headings, and glides to a stop — so it
+      // can travel at any angle instead of snapping to N/S/E/W.
       if (kx || ky) {
-        const kspeed = 380;
         const ml = Math.hypot(kx, ky) || 1;
-        player.x += (kx / ml) * kspeed * dt;
-        player.y += (ky / ml) * kspeed * dt;
-        if (kx) player.dir = kx > 0 ? 1 : -1;
+        player.vx += (kx / ml) * KEY_ACCEL * dt;
+        player.vy += (ky / ml) * KEY_ACCEL * dt;
       }
+      const damp = Math.exp(-KEY_DAMP * dt);
+      player.vx *= damp; player.vy *= damp;
+      const sp = Math.hypot(player.vx, player.vy);
+      if (sp > KEY_MAX) { player.vx = player.vx / sp * KEY_MAX; player.vy = player.vy / sp * KEY_MAX; }
+      player.x += player.vx * dt;
+      player.y += player.vy * dt;
+      if (Math.abs(player.vx) > 4) player.dir = player.vx > 0 ? 1 : -1;
     } else {
       const dx = pointer.x - player.x, dy = pointer.y - player.y;
       const ease = 1 - Math.pow(0.0015, dt);
@@ -689,14 +713,18 @@
       player.dvx *= 0.86; player.dvy *= 0.86;
       if (Math.random() < 0.6) burst(player.x, player.y, "rgba(189,236,255,0.8)", 1, 1.5);
     }
-    player.x = clamp(player.x, player.size, W - player.size);
-    player.y = clamp(player.y, player.size, H - player.size);
+    // soft bounce off the walls (only while the fish still fits on screen)
+    if (player.size * 2 < W && ((player.x < player.size && player.vx < 0) || (player.x > W - player.size && player.vx > 0))) player.vx *= -0.25;
+    if (player.size * 2 < H && ((player.y < player.size && player.vy < 0) || (player.y > H - player.size && player.vy > 0))) player.vy *= -0.25;
+    // keep the fish on screen; once it's wider/taller than the view, pin to center
+    player.x = clamp(player.x, Math.min(player.size, W / 2), Math.max(W - player.size, W / 2));
+    player.y = clamp(player.y, Math.min(player.size, H / 2), Math.max(H - player.size, H / 2));
     player.wobble += player.wobbleSpeed * dt * 1.5;
 
     // --- spawn cadence (harder over time and with level) ---
     spawnAcc += dt;
-    const interval = Math.max(0.3, (1.1 - game.time * 0.004) - game.level * 0.03);
-    if (spawnAcc > interval && enemies.length < 30) {
+    const interval = Math.max(0.22, (0.95 - game.time * 0.005) - game.level * 0.045);
+    if (spawnAcc > interval && enemies.length < 32) {
       spawnAcc = 0;
       for (const f of spawnWave(player, game.level)) {
         if (enemies.length < 34) enemies.push(f);
