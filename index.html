@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>Fishy</title>
+<title>Gulp</title>
 <style>
   :root {
     --hud: #bdecff;
@@ -72,7 +72,7 @@
   <canvas id="game"></canvas>
 
   <div id="start" class="overlay">
-    <div class="title">Fishy<span class="dot">.</span></div>
+    <div class="title">Gulp<span class="dot">.</span></div>
     <div class="sub">Eat fish smaller than you to grow. Steer clear of anything bigger — it'll eat you. Outgrow the whole tank to clear the level.</div>
     <button id="startBtn">Start swimming</button>
     <div class="best">Best score <b id="bestStart">0</b></div>
@@ -146,11 +146,11 @@
 
   // ---- High score (persisted) -------------------------------------------
   let best = 0;
-  try { best = parseInt(localStorage.getItem("fishy.best") || "0", 10) || 0; } catch (e) {}
+  try { best = parseInt(localStorage.getItem("gulp.best") || "0", 10) || 0; } catch (e) {}
   function saveBest(score) {
     if (score > best) {
       best = score;
-      try { localStorage.setItem("fishy.best", String(best)); } catch (e) {}
+      try { localStorage.setItem("gulp.best", String(best)); } catch (e) {}
       return true;
     }
     return false;
